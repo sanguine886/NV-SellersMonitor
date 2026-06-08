@@ -5,7 +5,10 @@ LiveTools 卖家监控面板 - 本地运行版
 ## 快速开始
 
 ```bash
-# 启动服务（无外部依赖，无需 npm install）
+# 安装依赖（仅 sql.js）
+npm install
+
+# 启动服务
 node server.js
 
 # 打开浏览器访问
@@ -20,6 +23,7 @@ node server.js
 - `target` - 目标 API 地址
 - `priceBoard` - 市场价格总览 API 地址
 - `referer` - 请求来源
+- `cycleStartHour` - 每日起始小时（24小时制），默认 4
 
 ## Cookie 设置
 
@@ -35,3 +39,9 @@ node server.js
 - 卖家列表实时刷新（每 5 秒）
 - Plus / Team 计划切换
 - 卖家卡片展示（价格、库存、活跃率、可信度）
+- Plus/Team 四线价格趋势图（最低价/最高价分开展示）
+- SQLite 本地数据存储（`data/nv.db`），周期自动清理
+
+## 依赖
+
+- `sql.js` — 纯 JS/WASM 的 SQLite 实现，无需 C++ 编译环境
