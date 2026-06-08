@@ -1,0 +1,6 @@
+{
+  "port": 8899,
+  "target": "https://trade.livetools.top/api/merchant-rankings?refresh=1",
+  "priceBoard": "https://trade.livetools.top/api/pool/price-board",
+  "referer": "https://trade.livetools.top/workspace/extract"
+}

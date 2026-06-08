@@ -1,0 +1,10 @@
+{
+  "name": "sellers-monitor",
+  "version": "1.0.0",
+  "description": "LiveTools 卖家监控面板 - 本地运行版",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {}
+}

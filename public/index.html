@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LiveTools 卖家监控面板</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      min-height: 100vh;
+      padding: 16px;
+    }
+    /* ===== Header ===== */
+    .header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 12px; padding: 14px 18px; background: #fff;
+      border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      flex-wrap: wrap; gap: 8px;
+    }
+    .header h1 { font-size: 18px; font-weight: 700; color: #1a1a1a; }
+    .status-bar { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #666; flex-wrap: wrap; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #34c759; animation: pulse 2s infinite; flex-shrink: 0; }
+    .status-dot.error { background: #ff3b30; animation: none; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .countdown { color: #999; }
+    .seller-count { color: #007aff; font-weight: 700; }
+    .refresh-btn {
+      background: #f0f0f0; border: 1px solid #ddd; color: #333;
+      padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    }
+    .refresh-btn:hover { background: #e0e0e0; border-color: #bbb; }
+    /* ===== Cookie Bar ===== */
+    .cookie-bar {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+      padding: 10px 14px; background: #fff; border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08); flex-wrap: wrap;
+    }
+    .cookie-bar input {
+      flex: 1; min-width: 120px; background: #f8f8f8; border: 1px solid #ddd; color: #333;
+      padding: 7px 12px; border-radius: 6px; font-size: 13px; font-family: 'Consolas', monospace; outline: none;
+    }
+    .cookie-bar input:focus { border-color: #007aff; }
+    .cookie-bar button {
+      background: #007aff; border: none; color: #fff;
+      padding: 7px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; white-space: nowrap;
+    }
+    .cookie-bar button:hover { background: #0066d6; }
+    .cookie-status { font-size: 11px; padding: 3px 8px; border-radius: 8px; white-space: nowrap; font-weight: 600; }
+    .cookie-status.ok { background: #e8f5e9; color: #2e7d32; }
+    .cookie-status.missing { background: #ffebee; color: #c62828; }
+    .cookie-status.source { background: #e3f2fd; color: #1565c0; font-weight: 400; }
+    .cookie-bar .btn-secondary {
+      background: #f0f0f0; border: 1px solid #ddd; color: #333;
+    }
+    .cookie-bar .btn-secondary:hover { background: #e0e0e0; border-color: #bbb; }
+    .cookie-hint { font-size: 11px; color: #999; width: 100%; margin-top: 2px; }
+    .error-msg a { color: #007aff; text-decoration: underline; }
+    /* ===== Market Overview ===== */
+    .market-section {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+      margin-bottom: 12px;
+    }
+    .market-card {
+      background: #fff; border-radius: 12px; padding: 14px 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .market-card h3 {
+      font-size: 13px; font-weight: 600; color: #888; margin-bottom: 8px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .market-card h3 .plan-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+    }
+    .plan-dot.plus { background: #007aff; }
+    .plan-dot.team { background: #ff9500; }
+    .market-prices {
+      display: flex; justify-content: space-between; align-items: flex-end; gap: 8px;
+    }
+    .market-price-main {
+      font-size: 22px; font-weight: 800; font-family: 'Consolas', monospace;
+    }
+    .market-price-main.plus-color { color: #007aff; }
+    .market-price-main.team-color { color: #ff9500; }
+    .market-price-range {
+      font-size: 11px; color: #999; font-family: 'Consolas', monospace;
+    }
+    .market-stats {
+      display: flex; gap: 12px; margin-top: 8px; font-size: 11px; color: #888;
+    }
+    .market-stats .stat-item { display: flex; flex-direction: column; gap: 2px; }
+    .market-stats .stat-label { color: #bbb; }
+    .market-stats .stat-value { font-family: 'Consolas', monospace; font-weight: 600; color: #555; }
+    .market-inventory {
+      display: inline-block; padding: 2px 8px; border-radius: 8px; font-size: 11px; font-weight: 600; margin-top: 6px;
+    }
+    .inventory-high { background: #e8f5e9; color: #2e7d32; }
+    .inventory-mid { background: #fff3e0; color: #e65100; }
+    .inventory-low { background: #ffebee; color: #c62828; }
+    /* ===== Plan Tabs ===== */
+    .plan-tabs {
+      display: flex; gap: 0; margin-bottom: 12px; background: #fff;
+      border-radius: 10px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .plan-tab {
+      flex: 1; padding: 10px 16px; text-align: center; cursor: pointer;
+      font-size: 14px; font-weight: 600; color: #888; background: #fff;
+      border: none; outline: none; transition: all 0.2s;
+      border-bottom: 3px solid transparent;
+    }
+    .plan-tab:hover { color: #555; background: #fafafa; }
+    .plan-tab.active { color: #1a1a1a; border-bottom-color: #007aff; background: #f8f9ff; }
+    .plan-tab .tab-count {
+      display: inline-block; margin-left: 6px; padding: 1px 7px;
+      border-radius: 10px; font-size: 11px; font-weight: 700;
+      background: #eee; color: #888;
+    }
+    .plan-tab.active .tab-count { background: #007aff; color: #fff; }
+    /* ===== Cards ===== */
+    .cards { display: flex; flex-direction: column; gap: 8px; }
+    /* 表头 */
+    .card-header {
+      display: none;
+      padding: 8px 20px; font-size: 12px; font-weight: 600; color: #999;
+      background: #fff; border-radius: 10px 10px 0 0;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      grid-template-columns: 36px 1.2fr 0.8fr 0.6fr 0.8fr 0.5fr 0.5fr 0.8fr;
+      gap: 14px; align-items: center;
+    }
+    .card-header span { text-align: center; }
+    .card-header .col-name { text-align: left; }
+    .card {
+      background: #fff; border-radius: 10px; padding: 12px 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08); transition: box-shadow 0.2s;
+      display: grid; grid-template-columns: 28px 1fr auto; gap: 8px 12px; align-items: center;
+    }
+    .card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.12); }
+    .card-new { animation: flashNew 1s ease; }
+    @keyframes flashNew { 0%{background:#e8f5e9} 100%{background:#fff} }
+    .card-rank { font-size: 13px; font-weight: 700; color: #bbb; font-family: 'Consolas', monospace; text-align: center; }
+    .card-name { font-size: 15px; font-weight: 700; color: #1a1a1a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .card-price { font-size: 18px; font-weight: 800; font-family: 'Consolas', monospace; text-align: right; }
+    .card .col-quality, .card .col-stock, .card .col-rate, .card .col-sold, .card .col-invalid { display: none; }
+    .card-details {
+      grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 14px;
+      font-size: 12px; color: #888; padding-top: 4px; border-top: 1px solid #f0f0f0;
+    }
+    .card-details .item { display: flex; align-items: center; gap: 4px; }
+    .quality-badge { display: inline-block; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 600; }
+    .quality-稳定 { background: #e8f5e9; color: #2e7d32; }
+    .quality-正常 { background: #e3f2fd; color: #1565c0; }
+    .quality-观察 { background: #fff3e0; color: #e65100; }
+    .price-low { color: #34c759; }
+    .price-mid { color: #ff9500; }
+    .price-high { color: #ff3b30; }
+    .stock-badge { display: inline-block; padding: 2px 8px; border-radius: 8px; font-size: 11px; font-weight: 600; }
+    .stock-ample { background: #e8f5e9; color: #2e7d32; }
+    .stock-normal { background: #fff3e0; color: #e65100; }
+    .stock-low { background: #ffebee; color: #c62828; }
+    .rate-bar { display: flex; align-items: center; gap: 4px; }
+    .rate-track { width: 48px; height: 5px; background: #eee; border-radius: 3px; overflow: hidden; }
+    .rate-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+    .rate-fill.high { background: #34c759; }
+    .rate-fill.mid { background: #ff9500; }
+    .rate-fill.low { background: #ff3b30; }
+    .rate-text { font-family: 'Consolas', monospace; font-size: 11px; font-weight: 600; min-width: 38px; }
+    .rate-text.high { color: #34c759; }
+    .rate-text.mid { color: #ff9500; }
+    .rate-text.low { color: #ff3b30; }
+    .loading { text-align: center; padding: 40px; color: #999; font-size: 14px; }
+    .error-msg { text-align: center; padding: 30px; color: #ff3b30; font-size: 14px; background: #fff; border-radius: 10px; }
+    .last-update { text-align: right; padding: 8px 4px; font-size: 11px; color: #999; }
+    /* ===== Desktop ===== */
+    @media (min-width: 769px) {
+      body { padding: 20px 24px; }
+      .header { padding: 16px 24px; }
+      .header h1 { font-size: 20px; }
+      .status-bar { gap: 16px; font-size: 14px; }
+      .market-section { grid-template-columns: 1fr 1fr; gap: 14px; }
+      .market-price-main { font-size: 28px; }
+      .card-header {
+        display: grid;
+        grid-template-columns: 36px 1.2fr 0.8fr 0.6fr 0.8fr 0.5fr 0.5fr 0.8fr;
+        gap: 14px;
+      }
+      .card {
+        padding: 14px 20px;
+        grid-template-columns: 36px 1.2fr 0.8fr 0.6fr 0.8fr 0.5fr 0.5fr 0.8fr;
+        gap: 14px;
+        border-radius: 0;
+      }
+      .card:last-child { border-radius: 0 0 10px 10px; }
+      .card .col-quality, .card .col-stock, .card .col-rate, .card .col-sold, .card .col-invalid { display: block; }
+      .card-details { display: none; }
+      .card-rank { font-size: 14px; }
+      .card-name { font-size: 16px; }
+      .card-price { font-size: 20px; text-align: right; }
+      .quality-badge { padding: 2px 8px; font-size: 11px; }
+      .stock-badge { padding: 3px 10px; font-size: 12px; }
+      .rate-track { width: 60px; height: 6px; }
+      .rate-text { font-size: 13px; min-width: 44px; }
+      .col-sold, .col-invalid { font-size: 13px; color: #888; text-align: center; font-family: 'Consolas', monospace; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>LiveTools 卖家监控面板</h1>
+    <div class="status-bar">
+      <div class="status-dot" id="statusDot"></div>
+      <span>卖家数: <span class="seller-count" id="sellerCount">-</span></span>
+      <span class="countdown" id="countdown">5s</span>
+      <button class="refresh-btn" onclick="fetchSellers()">立即刷新</button>
+    </div>
+  </div>
+
+  <div class="cookie-bar">
+    <span class="cookie-status missing" id="cookieStatus">Cookie 未设置</span>
+    <span class="cookie-status source" id="cookieSource" style="display:none"></span>
+    <input type="text" id="cookieInput" placeholder="粘贴 Cookie（scm_session=...）" />
+    <button onclick="saveCookie()">保存</button>
+    <button class="btn-secondary" onclick="reloadCookie()">从文件加载</button>
+    <div class="cookie-hint">自动读取项目目录下 <code>cookie.txt</code>，或将浏览器 Cookie 粘贴到输入框</div>
+  </div>
+
+  <!-- 市场价格总览 -->
+  <div class="market-section" id="marketSection">
+    <div class="market-card">
+      <h3><span class="plan-dot plus"></span>Plus 计划</h3>
+      <div class="market-prices">
+        <div>
+          <div class="market-price-main plus-color" id="plusMedian">-</div>
+          <div class="market-price-range" id="plusRange">-</div>
+        </div>
+        <div style="text-align:right">
+          <div class="market-inventory" id="plusInventory">-</div>
+        </div>
+      </div>
+      <div class="market-stats">
+        <div class="stat-item"><span class="stat-label">最低</span><span class="stat-value" id="plusMin">-</span></div>
+        <div class="stat-item"><span class="stat-label">P25</span><span class="stat-value" id="plusP25">-</span></div>
+        <div class="stat-item"><span class="stat-label">中位</span><span class="stat-value" id="plusMedianVal">-</span></div>
+        <div class="stat-item"><span class="stat-label">P75</span><span class="stat-value" id="plusP75">-</span></div>
+        <div class="stat-item"><span class="stat-label">最高</span><span class="stat-value" id="plusMax">-</span></div>
+      </div>
+    </div>
+    <div class="market-card">
+      <h3><span class="plan-dot team"></span>Team 计划</h3>
+      <div class="market-prices">
+        <div>
+          <div class="market-price-main team-color" id="teamMedian">-</div>
+          <div class="market-price-range" id="teamRange">-</div>
+        </div>
+        <div style="text-align:right">
+          <div class="market-inventory" id="teamInventory">-</div>
+        </div>
+      </div>
+      <div class="market-stats">
+        <div class="stat-item"><span class="stat-label">最低</span><span class="stat-value" id="teamMin">-</span></div>
+        <div class="stat-item"><span class="stat-label">P25</span><span class="stat-value" id="teamP25">-</span></div>
+        <div class="stat-item"><span class="stat-label">中位</span><span class="stat-value" id="teamMedianVal">-</span></div>
+        <div class="stat-item"><span class="stat-label">P75</span><span class="stat-value" id="teamP75">-</span></div>
+        <div class="stat-item"><span class="stat-label">最高</span><span class="stat-value" id="teamMax">-</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Plus / Team 切换 -->
+  <div class="plan-tabs">
+    <button class="plan-tab active" data-plan="plus" onclick="switchPlan('plus')">
+      Plus<span class="tab-count" id="plusCount">0</span>
+    </button>
+    <button class="plan-tab" data-plan="team" onclick="switchPlan('team')">
+      Team<span class="tab-count" id="teamCount">0</span>
+    </button>
+  </div>
+
+  <div class="cards" id="sellersCards">
+    <div class="card-header">
+      <span>#</span>
+      <span class="col-name">卖家</span>
+      <span>可信度</span>
+      <span>库存</span>
+      <span>活跃率</span>
+      <span>售出</span>
+      <span>失效</span>
+      <span>价格</span>
+    </div>
+    <div class="loading">加载中...</div>
+  </div>
+  <div class="last-update" id="lastUpdate">-</div>
+
+  <script>
+    const API_URL = '/api/sellers';
+    const STATUS_URL = '/api/status';
+    const SET_COOKIE_URL = '/api/set-cookie';
+    const PRICE_BOARD_URL = '/api/price-board';
+
+    let countdown = 5;
+    let timer = null;
+    let previousIds = new Set();
+    let latestSellers = [];
+    let currentPlan = 'plus';
+
+    // ============ Cookie ============
+    async function checkCookieStatus() {
+      try {
+        const resp = await fetch(STATUS_URL);
+        const data = await resp.json();
+        const el = document.getElementById('cookieStatus');
+        const srcEl = document.getElementById('cookieSource');
+        if (data.hasCookie) {
+          el.textContent = `Cookie 已设置 (${data.length} 字符)`;
+          el.className = 'cookie-status ok';
+          if (data.source === 'file') {
+            srcEl.textContent = '来源: cookie.txt';
+            srcEl.style.display = '';
+          } else if (data.source === 'manual') {
+            srcEl.textContent = '来源: 手动输入';
+            srcEl.style.display = '';
+          } else {
+            srcEl.style.display = 'none';
+          }
+        } else {
+          el.textContent = 'Cookie 未设置';
+          el.className = 'cookie-status missing';
+          srcEl.style.display = 'none';
+        }
+      } catch {}
+    }
+
+    async function saveCookie() {
+      const input = document.getElementById('cookieInput');
+      const cookie = input.value.trim();
+      if (!cookie) { alert('请输入 Cookie'); return; }
+      try {
+        const resp = await fetch(SET_COOKIE_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cookie })
+        });
+        const data = await resp.json();
+        if (data.ok) { input.value = ''; checkCookieStatus(); fetchSellers(); loadPriceBoard(); }
+        else { alert('设置失败: ' + (data.error || '未知错误')); }
+      } catch (err) { alert('请求失败: ' + err.message); }
+    }
+
+    async function reloadCookie() {
+      try {
+        const resp = await fetch('/api/reload-cookie', { method: 'POST' });
+        const data = await resp.json();
+        if (data.ok) {
+          checkCookieStatus();
+          fetchSellers();
+          loadPriceBoard();
+        } else {
+          alert(data.error || '加载失败');
+        }
+      } catch (err) { alert('请求失败: ' + err.message); }
+    }
+
+    // ============ 市场价格总览 ============
+    function fmt(cents) { return '¥' + (cents / 100).toFixed(2); }
+
+    function inventoryClass(level) {
+      if (level === 'high') return 'inventory-high';
+      if (level === 'medium' || level === 'mid') return 'inventory-mid';
+      return 'inventory-low';
+    }
+
+    async function loadPriceBoard() {
+      try {
+        const resp = await fetch(PRICE_BOARD_URL);
+        if (!resp.ok) return;
+        const json = await resp.json();
+        const board = json.board;
+        if (!board) return;
+        const plans = board.plans || [];
+        for (const p of plans) {
+          const prefix = p.plan;
+          const el = (id) => document.getElementById(id);
+          el(`${prefix}Median`).textContent = fmt(p.median_cents);
+          el(`${prefix}Range`).textContent = `${fmt(p.min_cents)} ~ ${fmt(p.max_cents)}`;
+          el(`${prefix}Min`).textContent = fmt(p.min_cents);
+          el(`${prefix}P25`).textContent = fmt(p.p25_cents);
+          el(`${prefix}MedianVal`).textContent = fmt(p.median_cents);
+          el(`${prefix}P75`).textContent = fmt(p.p75_cents);
+          el(`${prefix}Max`).textContent = fmt(p.max_cents);
+          const invEl = el(`${prefix}Inventory`);
+          invEl.textContent = p.inventory_label || '-';
+          invEl.className = 'market-inventory ' + inventoryClass(p.inventory_level);
+        }
+      } catch (err) { console.error('Price board error:', err); }
+    }
+
+    // ============ Plan 切换 ============
+    function switchPlan(plan) {
+      currentPlan = plan;
+      document.querySelectorAll('.plan-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.plan === plan);
+      });
+      renderCards();
+    }
+
+    // ============ 卖家列表 ============
+    function getRateClass(rate) { return rate >= 80 ? 'high' : rate >= 40 ? 'mid' : 'low'; }
+    function getPriceClass(price) { return price <= 4.5 ? 'price-low' : price <= 6 ? 'price-mid' : 'price-high'; }
+
+    function getPlanPrice(seller, plan) {
+      const prices = seller.sale_plan_prices || {};
+      const p = prices[plan];
+      return p ? p.min_cents : null;
+    }
+
+    function getPlanCount(seller, plan) {
+      const counts = seller.sale_plan_counts || {};
+      return counts[plan] || 0;
+    }
+
+    function getMinPrice(seller) {
+      const plus = getPlanPrice(seller, 'plus');
+      const team = getPlanPrice(seller, 'team');
+      if (plus != null && team != null) return Math.min(plus, team);
+      return plus ?? team ?? 0;
+    }
+
+    function filterSellers(sellers, plan) {
+      return sellers.filter(s => {
+        const price = getPlanPrice(s, plan);
+        const count = getPlanCount(s, plan);
+        return price != null && count > 0;
+      });
+    }
+
+    function renderCard(seller, index) {
+      const price = getPlanPrice(seller, currentPlan);
+      const priceDisplay = price != null ? price / 100 : 0;
+      const count = getPlanCount(seller, currentPlan);
+      const rate = seller.active_rate_percent || 0;
+      const rateClass = getRateClass(rate);
+      const isNew = !previousIds.has(seller.merchant_id || seller.id);
+      const quality = seller.sample_label || '-';
+      const qualityMap = { '高可信样本': '稳定', '稳定样本': '正常', '基础样本': '观察', '观察样本': '观察' };
+      const qualityKey = qualityMap[quality] || quality;
+      const stockLevel = count >= 20 ? 'ample' : count >= 5 ? 'normal' : 'low';
+      const stockLabel = count >= 20 ? '充足' : count >= 5 ? '正常' : '紧张';
+      const soldCount = seller.sold_count || 0;
+      const invalidRate = seller.invalid_rate_percent || 0;
+      return `
+        <div class="card ${isNew ? 'card-new' : ''}">
+          <div class="card-rank">${seller.rank || index + 1}</div>
+          <div class="card-name" title="${seller.display_name}">${seller.display_name}</div>
+          <div class="col-quality"><span class="quality-badge quality-${qualityKey}">${quality}</span></div>
+          <div class="col-stock"><span class="stock-badge stock-${stockLevel}">${stockLabel} (${count})</span></div>
+          <div class="col-rate rate-bar">
+            <div class="rate-track"><div class="rate-fill ${rateClass}" style="width:${Math.min(rate,100)}%"></div></div>
+            <span class="rate-text ${rateClass}">${rate.toFixed(1)}%</span>
+          </div>
+          <div class="col-sold">${soldCount}</div>
+          <div class="col-invalid">${invalidRate.toFixed(1)}%</div>
+          <div class="card-price ${getPriceClass(priceDisplay)}">¥${priceDisplay.toFixed(2)}</div>
+          <div class="card-details">
+            <span class="item"><span class="quality-badge quality-${qualityKey}">${quality}</span></span>
+            <span class="item"><span class="stock-badge stock-${stockLevel}">${stockLabel} (${count})</span></span>
+            <span class="item rate-bar">
+              <span class="rate-track"><span class="rate-fill ${rateClass}" style="width:${Math.min(rate,100)}%"></span></span>
+              <span class="rate-text ${rateClass}">${rate.toFixed(1)}%</span>
+            </span>
+            <span class="item">售出 ${soldCount}</span>
+            <span class="item">失效 ${invalidRate.toFixed(1)}%</span>
+          </div>
+        </div>`;
+    }
+
+    const CARD_HEADER = `<div class="card-header"><span>#</span><span class="col-name">卖家</span><span>可信度</span><span>库存</span><span>活跃率</span><span>售出</span><span>失效</span><span>价格</span></div>`;
+
+    function renderCards() {
+      const filtered = filterSellers(latestSellers, currentPlan);
+      filtered.sort((a, b) => getPlanPrice(a, currentPlan) - getPlanPrice(b, currentPlan));
+      const container = document.getElementById('sellersCards');
+      container.innerHTML = CARD_HEADER + filtered.map((s, i) => renderCard(s, i)).join('');
+      document.getElementById('sellerCount').textContent = filtered.length;
+    }
+
+    async function fetchSellers() {
+      try {
+        const resp = await fetch(API_URL);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const sellers = data.rankings || data.sellers || [];
+        latestSellers = sellers;
+      } catch (err) {
+        console.error('Fetch error:', err);
+        document.getElementById('statusDot').className = 'status-dot error';
+        document.getElementById('sellersCards').innerHTML =
+          `<div class="error-msg">请求失败: ${err.message}<br>可能是 Cookie 过期，请更新</div>`;
+        return;
+      }
+
+      const plusSellers = filterSellers(latestSellers, 'plus');
+      const teamSellers = filterSellers(latestSellers, 'team');
+      document.getElementById('plusCount').textContent = plusSellers.length;
+      document.getElementById('teamCount').textContent = teamSellers.length;
+
+      renderCards();
+      document.getElementById('statusDot').className = 'status-dot';
+      document.getElementById('lastUpdate').textContent = `最后更新: ${new Date().toLocaleTimeString()}`;
+      previousIds = new Set(latestSellers.map(s => s.merchant_id || s.id));
+      countdown = 5;
+    }
+
+    // ============ 定时器 ============
+    function startTimer() {
+      fetchSellers();
+      loadPriceBoard();
+
+      timer = setInterval(() => {
+        countdown--;
+        document.getElementById('countdown').textContent = `${countdown}s`;
+        if (countdown <= 0) {
+          fetchSellers();
+          loadPriceBoard();
+        }
+      }, 1000);
+    }
+
+    // ============ 启动 ============
+    checkCookieStatus();
+    startTimer();
+  </script>
+</body>
+</html>
