@@ -9,14 +9,70 @@ const PORT = config.port || 8899;
 const TARGET = config.target;
 const PRICE_BOARD_URL = config.priceBoard || 'https://trade.livetools.top/api/pool/price-board';
 const REFERER = config.referer || '';
+const CYCLE_START_HOUR = config.cycleStartHour || 4;
+
+// 数据目录
+const dataDir = path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+const dbPath = path.join(dataDir, 'nv.db');
+
+let db; // sql.js Database 实例
+
+// 保存数据库到文件
+function saveDb() {
+  const data = db.export();
+  fs.writeFileSync(dbPath, Buffer.from(data));
+}
+
+// 初始化数据库
+async function initDb() {
+  const initSqlJs = require('sql.js');
+  const SQL = await initSqlJs();
+
+  if (fs.existsSync(dbPath)) {
+    const buf = fs.readFileSync(dbPath);
+    db = new SQL.Database(buf);
+  } else {
+    db = new SQL.Database();
+  }
+
+  db.run('PRAGMA journal_mode = WAL');
+  db.run(`
+    CREATE TABLE IF NOT EXISTS snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      plus_min INTEGER DEFAULT 0,
+      plus_max INTEGER DEFAULT 0,
+      plus_min_seller TEXT DEFAULT '',
+      plus_max_seller TEXT DEFAULT '',
+      team_min INTEGER DEFAULT 0,
+      team_max INTEGER DEFAULT 0,
+      team_min_seller TEXT DEFAULT '',
+      team_max_seller TEXT DEFAULT '',
+      seller_count INTEGER DEFAULT 0,
+      cycle_start TEXT NOT NULL
+    )
+  `);
+  db.run('CREATE INDEX IF NOT EXISTS idx_cycle ON snapshots(cycle_start)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_ts ON snapshots(ts)');
+  saveDb();
+}
+
+// 计算当前周期起始时间
+function getCycleStart() {
+  const now = new Date();
+  const cycle = new Date(now);
+  cycle.setHours(CYCLE_START_HOUR, 0, 0, 0);
+  if (now < cycle) cycle.setDate(cycle.getDate() - 1);
+  return cycle.toISOString();
+}
 
 // Cookie 存储
 let COOKIE = '';
-let COOKIE_SOURCE = ''; // 'file' | 'manual'
+let COOKIE_SOURCE = '';
 
 const COOKIE_FILE = path.join(__dirname, 'cookie.txt');
 
-// 启动时自动从 cookie.txt 加载
 function loadCookieFromFile() {
   try {
     if (fs.existsSync(COOKIE_FILE)) {
@@ -105,9 +161,48 @@ function parseBody(req) {
   });
 }
 
+// sql.js 查询辅助：返回对象数组
+function queryAll(sql, params = []) {
+  const stmt = db.prepare(sql);
+  stmt.bind(params);
+  const results = [];
+  while (stmt.step()) {
+    results.push(stmt.getAsObject());
+  }
+  stmt.free();
+  return results;
+}
+
+// 从 sellers 数据中提取 Plus/Team 最高最低价
+function extractPlanPrices(sellers) {
+  const result = {
+    plus_min: Infinity, plus_max: -Infinity, plus_min_seller: '', plus_max_seller: '',
+    team_min: Infinity, team_max: -Infinity, team_min_seller: '', team_max_seller: '',
+  };
+
+  for (const s of sellers) {
+    const prices = s.sale_plan_prices || {};
+    const plusPrice = prices.plus?.min_cents;
+    const teamPrice = prices.team?.min_cents;
+
+    if (plusPrice != null) {
+      if (plusPrice < result.plus_min) { result.plus_min = plusPrice; result.plus_min_seller = s.display_name || ''; }
+      if (plusPrice > result.plus_max) { result.plus_max = plusPrice; result.plus_max_seller = s.display_name || ''; }
+    }
+    if (teamPrice != null) {
+      if (teamPrice < result.team_min) { result.team_min = teamPrice; result.team_min_seller = s.display_name || ''; }
+      if (teamPrice > result.team_max) { result.team_max = teamPrice; result.team_max_seller = s.display_name || ''; }
+    }
+  }
+
+  if (result.plus_min === Infinity) { result.plus_min = 0; result.plus_max = 0; }
+  if (result.team_min === Infinity) { result.team_min = 0; result.team_max = 0; }
+
+  return result;
+}
+
 // HTTP 服务器
 const server = http.createServer(async (req, res) => {
-  // CORS
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
@@ -124,7 +219,7 @@ const server = http.createServer(async (req, res) => {
     return jsonResponse(res, { hasCookie: COOKIE.length > 0, source: COOKIE_SOURCE, length: COOKIE.length });
   }
 
-  // API: 设置 Cookie（手动输入，同时保存到 cookie.txt）
+  // API: 设置 Cookie
   if (url.pathname === '/api/set-cookie' && req.method === 'POST') {
     const body = await parseBody(req);
     if (!body || !body.cookie || typeof body.cookie !== 'string') {
@@ -132,7 +227,6 @@ const server = http.createServer(async (req, res) => {
     }
     COOKIE = body.cookie.trim();
     COOKIE_SOURCE = 'manual';
-    // 同步保存到文件，下次启动自动加载
     try { fs.writeFileSync(COOKIE_FILE, COOKIE); } catch {}
     console.log(`[Cookie] 手动更新，长度: ${COOKIE.length}`);
     return jsonResponse(res, { ok: true, length: COOKIE.length, source: 'manual' });
@@ -175,16 +269,66 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // 静态文件
+  // API: 记录快照
+  if (url.pathname === '/api/snapshot' && req.method === 'POST') {
+    try {
+      const body = await parseBody(req);
+      if (!body || !Array.isArray(body.sellers) || body.sellers.length === 0) {
+        return jsonResponse(res, { error: 'sellers 数组必填且非空' }, 400);
+      }
+
+      const prices = extractPlanPrices(body.sellers);
+      const cycleStart = getCycleStart();
+      const ts = new Date().toISOString();
+
+      db.run(
+        `INSERT INTO snapshots (ts, plus_min, plus_max, plus_min_seller, plus_max_seller,
+         team_min, team_max, team_min_seller, team_max_seller, seller_count, cycle_start)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [ts, prices.plus_min, prices.plus_max, prices.plus_min_seller, prices.plus_max_seller,
+         prices.team_min, prices.team_max, prices.team_min_seller, prices.team_max_seller,
+         body.sellers.length, cycleStart]
+      );
+
+      // 清理旧周期数据
+      db.run('DELETE FROM snapshots WHERE cycle_start != ?', [cycleStart]);
+      saveDb();
+
+      return jsonResponse(res, { ok: true, ts, cycleStart, ...prices });
+    } catch (err) {
+      return jsonResponse(res, { error: `快照写入失败: ${err.message}` }, 500);
+    }
+  }
+
+  // API: 图表数据
+  if (url.pathname === '/api/chart-data' && req.method === 'GET') {
+    try {
+      const cycleStart = getCycleStart();
+      const rows = queryAll(
+        `SELECT ts, plus_min, plus_max, plus_min_seller, plus_max_seller,
+         team_min, team_max, team_min_seller, team_max_seller, seller_count
+         FROM snapshots WHERE cycle_start = ? ORDER BY ts ASC`,
+        [cycleStart]
+      );
+
+      return jsonResponse(res, { cycleStart, data: rows });
+    } catch (err) {
+      return jsonResponse(res, { error: `查询失败: ${err.message}` }, 500);
+    }
+  }
+
   serveStatic(req, res);
 });
 
 // 启动
-loadCookieFromFile();
-server.listen(PORT, () => {
-  console.log(`\n  ========================================`);
-  console.log(`  LiveTools 卖家监控面板`);
-  console.log(`  Server running at http://localhost:${PORT}`);
-  console.log(`  Open http://localhost:${PORT} in browser`);
-  console.log(`  ========================================\n`);
-});
+(async () => {
+  await initDb();
+  loadCookieFromFile();
+  server.listen(PORT, () => {
+    console.log(`\n  ========================================`);
+    console.log(`  LiveTools 卖家监控面板`);
+    console.log(`  Server running at http://localhost:${PORT}`);
+    console.log(`  Open http://localhost:${PORT} in browser`);
+    console.log(`  ========================================\n`);
+  });
+})();

@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>LiveTools 卖家监控面板</title>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -99,6 +100,32 @@
     .inventory-high { background: #e8f5e9; color: #2e7d32; }
     .inventory-mid { background: #fff3e0; color: #e65100; }
     .inventory-low { background: #ffebee; color: #c62828; }
+    /* ===== Chart ===== */
+    .chart-section {
+      background: #fff; border-radius: 12px; padding: 14px 16px;
+      margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
+    .chart-header h2 { font-size: 15px; font-weight: 700; color: #1a1a1a; }
+    .chart-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .chart-legend { display: flex; gap: 10px; font-size: 12px; color: #888; flex-wrap: wrap; }
+    .legend-item { display: flex; align-items: center; gap: 4px; }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .legend-dot.plus-min { background: #007aff; }
+    .legend-dot.plus-max { background: #5ac8fa; }
+    .legend-dot.team-min { background: #ff9500; }
+    .legend-dot.team-max { background: #ffcc00; }
+    .chart-controls label { font-size: 12px; color: #666; }
+    .chart-controls select { padding: 3px 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
+    #chart-container { width: 100%; height: 280px; border-radius: 8px; overflow: hidden; position: relative; }
+    .chart-tooltip {
+      position: absolute; display: none; background: rgba(26,26,26,0.92); color: #fff;
+      padding: 8px 12px; border-radius: 8px; font-size: 12px; line-height: 1.7;
+      pointer-events: none; z-index: 100; white-space: nowrap; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .tooltip-label { color: #999; }
+    .tooltip-price { font-family: 'Consolas', monospace; font-weight: 700; }
+    .tooltip-seller { color: #bbb; font-size: 11px; }
     /* ===== Plan Tabs ===== */
     .plan-tabs {
       display: flex; gap: 0; margin-bottom: 12px; background: #fff;
@@ -120,7 +147,6 @@
     .plan-tab.active .tab-count { background: #007aff; color: #fff; }
     /* ===== Cards ===== */
     .cards { display: flex; flex-direction: column; gap: 8px; }
-    /* 表头 */
     .card-header {
       display: none;
       padding: 8px 20px; font-size: 12px; font-weight: 600; color: #999;
@@ -180,6 +206,7 @@
       .status-bar { gap: 16px; font-size: 14px; }
       .market-section { grid-template-columns: 1fr 1fr; gap: 14px; }
       .market-price-main { font-size: 28px; }
+      #chart-container { height: 360px; }
       .card-header {
         display: grid;
         grid-template-columns: 36px 1.2fr 0.8fr 0.6fr 0.8fr 0.5fr 0.5fr 0.8fr;
@@ -267,6 +294,31 @@
     </div>
   </div>
 
+  <!-- 价格趋势图 -->
+  <div class="chart-section">
+    <div class="chart-header">
+      <h2>价格变动趋势</h2>
+      <div class="chart-controls">
+        <span class="chart-legend">
+          <span class="legend-item"><span class="legend-dot plus-min"></span>Plus 最低价</span>
+          <span class="legend-item"><span class="legend-dot plus-max"></span>Plus 最高价</span>
+          <span class="legend-item"><span class="legend-dot team-min"></span>Team 最低价</span>
+          <span class="legend-item"><span class="legend-dot team-max"></span>Team 最高价</span>
+        </span>
+        <label>聚合:
+          <select id="intervalSelect" onchange="rebuildChart()">
+            <option value="60" selected>1 分钟</option>
+            <option value="300">5 分钟</option>
+            <option value="900">15 分钟</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <div id="chart-container">
+      <div class="chart-tooltip" id="chartTooltip"></div>
+    </div>
+  </div>
+
   <!-- Plus / Team 切换 -->
   <div class="plan-tabs">
     <button class="plan-tab active" data-plan="plus" onclick="switchPlan('plus')">
@@ -297,12 +349,23 @@
     const STATUS_URL = '/api/status';
     const SET_COOKIE_URL = '/api/set-cookie';
     const PRICE_BOARD_URL = '/api/price-board';
+    const SNAPSHOT_URL = '/api/snapshot';
+    const CHART_DATA_URL = '/api/chart-data';
 
     let countdown = 5;
     let timer = null;
     let previousIds = new Set();
     let latestSellers = [];
     let currentPlan = 'plus';
+
+    // 图表相关
+    let chart = null;
+    let plusMinSeries = null;
+    let plusMaxSeries = null;
+    let teamMinSeries = null;
+    let teamMaxSeries = null;
+    let rawData = [];
+    let pointMeta = {};
 
     // ============ Cookie ============
     async function checkCookieStatus() {
@@ -418,13 +481,6 @@
       return counts[plan] || 0;
     }
 
-    function getMinPrice(seller) {
-      const plus = getPlanPrice(seller, 'plus');
-      const team = getPlanPrice(seller, 'team');
-      if (plus != null && team != null) return Math.min(plus, team);
-      return plus ?? team ?? 0;
-    }
-
     function filterSellers(sellers, plan) {
       return sellers.filter(s => {
         const price = getPlanPrice(s, plan);
@@ -510,22 +566,190 @@
       countdown = 5;
     }
 
+    // ============ 快照采集 ============
+    async function recordSnapshot() {
+      if (latestSellers.length === 0) return;
+      try {
+        await fetch(SNAPSHOT_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sellers: latestSellers })
+        });
+      } catch (err) { console.error('Snapshot error:', err); }
+    }
+
+    // ============ 四线折线图 ============
+    function initChart() {
+      const container = document.getElementById('chart-container');
+      chart = LightweightCharts.createChart(container, {
+        width: container.clientWidth,
+        height: container.clientHeight || 280,
+        layout: { background: { type: 'solid', color: '#ffffff' }, textColor: '#666', fontSize: 11 },
+        grid: { vertLines: { color: '#f0f0f0' }, horzLines: { color: '#f0f0f0' } },
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+          vertLine: { labelBackgroundColor: '#007aff' },
+          horzLine: { labelBackgroundColor: '#007aff' },
+        },
+        rightPriceScale: { borderColor: '#ddd', scaleMargins: { top: 0.1, bottom: 0.1 } },
+        timeScale: { borderColor: '#ddd', timeVisible: true, secondsVisible: false, rightOffset: 5, barSpacing: 6 },
+        localization: {
+          locale: 'zh-CN',
+          priceFormatter: (price) => `¥${(price / 100).toFixed(2)}`,
+        },
+      });
+
+      // Plus 最低价 — 蓝色实线
+      plusMinSeries = chart.addLineSeries({
+        color: '#007aff', lineWidth: 2,
+        priceLineVisible: false, lastValueVisible: true,
+        crosshairMarkerVisible: true, crosshairMarkerRadius: 4,
+      });
+
+      // Plus 最高价 — 浅蓝虚线
+      plusMaxSeries = chart.addLineSeries({
+        color: '#5ac8fa', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
+        priceLineVisible: false, lastValueVisible: false,
+        crosshairMarkerVisible: true, crosshairMarkerRadius: 3,
+      });
+
+      // Team 最低价 — 橙色实线
+      teamMinSeries = chart.addLineSeries({
+        color: '#ff9500', lineWidth: 2,
+        priceLineVisible: false, lastValueVisible: true,
+        crosshairMarkerVisible: true, crosshairMarkerRadius: 4,
+      });
+
+      // Team 最高价 — 黄色虚线
+      teamMaxSeries = chart.addLineSeries({
+        color: '#ffcc00', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
+        priceLineVisible: false, lastValueVisible: false,
+        crosshairMarkerVisible: true, crosshairMarkerRadius: 3,
+      });
+
+      // Tooltip
+      const tooltip = document.getElementById('chartTooltip');
+      chart.subscribeCrosshairMove((param) => {
+        if (!param.time || !param.point || param.point.x < 0 || param.point.y < 0) {
+          tooltip.style.display = 'none'; return;
+        }
+        const pm = param.seriesData.get(plusMinSeries);
+        const px = param.seriesData.get(plusMaxSeries);
+        const tm = param.seriesData.get(teamMinSeries);
+        const tx = param.seriesData.get(teamMaxSeries);
+        if (!pm && !px && !tm && !tx) { tooltip.style.display = 'none'; return; }
+
+        const meta = pointMeta[param.time] || {};
+        const fmtP = (v) => v ? '¥' + (v / 100).toFixed(2) : '-';
+
+        tooltip.innerHTML = `
+          <div><span class="tooltip-label" style="color:#007aff">Plus 最低:</span> <span class="tooltip-price">${fmtP(pm?.value)}</span> <span class="tooltip-seller">${meta.plusMinS || ''}</span></div>
+          <div><span class="tooltip-label" style="color:#5ac8fa">Plus 最高:</span> <span class="tooltip-price">${fmtP(px?.value)}</span> <span class="tooltip-seller">${meta.plusMaxS || ''}</span></div>
+          <div><span class="tooltip-label" style="color:#ff9500">Team 最低:</span> <span class="tooltip-price">${fmtP(tm?.value)}</span> <span class="tooltip-seller">${meta.teamMinS || ''}</span></div>
+          <div><span class="tooltip-label" style="color:#ffcc00">Team 最高:</span> <span class="tooltip-price">${fmtP(tx?.value)}</span> <span class="tooltip-seller">${meta.teamMaxS || ''}</span></div>
+        `;
+
+        const rect = container.getBoundingClientRect();
+        let left = param.point.x + 12;
+        let top = param.point.y - 80;
+        if (left + 280 > rect.width) left = param.point.x - 290;
+        if (top < 0) top = 10;
+        tooltip.style.display = 'block';
+        tooltip.style.left = left + 'px';
+        tooltip.style.top = top + 'px';
+      });
+
+      new ResizeObserver(() => {
+        chart.applyOptions({ width: container.clientWidth, height: container.clientHeight || 280 });
+      }).observe(container);
+    }
+
+    function aggregateData(data, intervalSec) {
+      if (!data.length) return { plusMinPts: [], plusMaxPts: [], teamMinPts: [], teamMaxPts: [] };
+      const buckets = {};
+      for (const d of data) {
+        const ts = Math.floor(new Date(d.ts).getTime() / 1000);
+        const key = Math.floor(ts / intervalSec) * intervalSec;
+        if (!buckets[key]) buckets[key] = [];
+        buckets[key].push(d);
+      }
+
+      const plusMinPts = [], plusMaxPts = [], teamMinPts = [], teamMaxPts = [];
+      pointMeta = {};
+
+      for (const [key, pts] of Object.entries(buckets)) {
+        const time = parseInt(key);
+        const avg = (arr) => Math.round(arr.reduce((s, v) => s + v, 0) / arr.length);
+
+        const pMinArr = pts.map(p => p.plus_min).filter(v => v > 0);
+        const pMaxArr = pts.map(p => p.plus_max).filter(v => v > 0);
+        const tMinArr = pts.map(p => p.team_min).filter(v => v > 0);
+        const tMaxArr = pts.map(p => p.team_max).filter(v => v > 0);
+
+        // 找到本轮最小/最大对应的卖家
+        let pmPt = pts[0], pxPt = pts[0], tmPt = pts[0], txPt = pts[0];
+        for (const p of pts) {
+          if (p.plus_min < pmPt.plus_min) pmPt = p;
+          if (p.plus_max > pxPt.plus_max) pxPt = p;
+          if (p.team_min < tmPt.team_min) tmPt = p;
+          if (p.team_max > txPt.team_max) txPt = p;
+        }
+
+        if (pMinArr.length) plusMinPts.push({ time, value: avg(pMinArr) });
+        if (pMaxArr.length) plusMaxPts.push({ time, value: avg(pMaxArr) });
+        if (tMinArr.length) teamMinPts.push({ time, value: avg(tMinArr) });
+        if (tMaxArr.length) teamMaxPts.push({ time, value: avg(tMaxArr) });
+
+        pointMeta[time] = {
+          plusMinS: pmPt.plus_min_seller || '',
+          plusMaxS: pxPt.plus_max_seller || '',
+          teamMinS: tmPt.team_min_seller || '',
+          teamMaxS: txPt.team_max_seller || '',
+        };
+      }
+
+      const sort = (a, b) => a.time - b.time;
+      plusMinPts.sort(sort);
+      plusMaxPts.sort(sort);
+      teamMinPts.sort(sort);
+      teamMaxPts.sort(sort);
+      return { plusMinPts, plusMaxPts, teamMinPts, teamMaxPts };
+    }
+
+    async function loadChartData() {
+      try {
+        const resp = await fetch(CHART_DATA_URL);
+        const json = await resp.json();
+        rawData = json.data || [];
+        rebuildChart();
+      } catch (err) { console.error('Chart data error:', err); }
+    }
+
+    function rebuildChart() {
+      const intervalSec = parseInt(document.getElementById('intervalSelect').value);
+      const { plusMinPts, plusMaxPts, teamMinPts, teamMaxPts } = aggregateData(rawData, intervalSec);
+      if (plusMinSeries) plusMinSeries.setData(plusMinPts);
+      if (plusMaxSeries) plusMaxSeries.setData(plusMaxPts);
+      if (teamMinSeries) teamMinSeries.setData(teamMinPts);
+      if (teamMaxSeries) teamMaxSeries.setData(teamMaxPts);
+    }
+
     // ============ 定时器 ============
     function startTimer() {
-      fetchSellers();
+      fetchSellers().then(() => recordSnapshot());
+      loadChartData();
       loadPriceBoard();
 
       timer = setInterval(() => {
         countdown--;
         document.getElementById('countdown').textContent = `${countdown}s`;
         if (countdown <= 0) {
-          fetchSellers();
-          loadPriceBoard();
+          fetchSellers().then(() => { recordSnapshot(); loadChartData(); loadPriceBoard(); });
         }
       }, 1000);
     }
 
     // ============ 启动 ============
+    initChart();
     checkCookieStatus();
     startTimer();
   </script>
